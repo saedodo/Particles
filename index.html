@@ -1,1 +1,375 @@
-index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Particle Cloud</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+            color: #f3f4f6; /* Light text for controls */
+        }
+        #controls {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background-color: rgba(31, 41, 55, 0.85); /* Semi-transparent dark gray */
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            max-width: 300px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        #controls h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #4b5563;
+            padding-bottom: 0.5rem;
+        }
+        #controls h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-top: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        #controls label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+        #controls input[type="range"],
+        #controls input[type="color"] {
+            width: 100%;
+            margin-bottom: 1rem;
+            cursor: pointer;
+        }
+        #controls input[type="color"] {
+            height: 40px;
+            border-radius: 6px;
+            border: 1px solid #4b5563;
+        }
+        #controls button {
+            width: 100%;
+            padding: 0.6rem 1rem;
+            background-color: #3b82f6; /* Blue */
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-bottom: 0.5rem;
+        }
+        #controls button:hover {
+            background-color: #2563eb; /* Darker blue */
+        }
+        #controls button:active {
+            background-color: #1d4ed8; /* Even darker blue */
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>Particle Controls</h3>
+        
+        <div>
+            <label for="particleSize">Particle Size:</label>
+            <input type="range" id="particleSize" min="0.01" max="0.5" step="0.005" value="0.05">
+        </div>
+
+        <h4>Color Options</h4>
+        <div>
+            <label for="particleColor">Base Color:</label>
+            <input type="color" id="particleColor" value="#ffffff">
+        </div>
+        <button id="setBaseColor">Apply Base Color</button>
+        <button id="rainbowColors">Rainbow Mode</button>
+
+        <h4>Shapes</h4>
+        <button id="sphereShape">Sphere</button>
+        <button id="cubeShape">Cube</button>
+        <button id="torusKnotShape">Torus Knot</button>
+        <button id="randomCloudShape">Random Cloud</button>
+    </div>
+
+    <canvas id="particleCanvas"></canvas>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, particleSystem, controls;
+        let targetShapePositions = null; // To store target positions for morphing
+        let isMorphing = false;
+        const NUM_PARTICLES = 15000; // Number of particles
+        const LERP_FACTOR = 0.03; // Speed of morphing
+
+        // DOM Elements for controls
+        const particleSizeSlider = document.getElementById('particleSize');
+        const particleColorPicker = document.getElementById('particleColor');
+        const setBaseColorButton = document.getElementById('setBaseColor');
+        const rainbowColorsButton = document.getElementById('rainbowColors');
+        const sphereShapeButton = document.getElementById('sphereShape');
+        const cubeShapeButton = document.getElementById('cubeShape');
+        const torusKnotShapeButton = document.getElementById('torusKnotShape');
+        const randomCloudShapeButton = document.getElementById('randomCloudShape');
+        const canvas = document.getElementById('particleCanvas');
+
+        // Initialize the visualization
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 35;
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setClearColor(0x111827); // Dark background matching body
+
+            // Particles
+            const positions = new Float32Array(NUM_PARTICLES * 3);
+            const colors = new Float32Array(NUM_PARTICLES * 3);
+            const initialColor = new THREE.Color(particleColorPicker.value);
+
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+                // Initial random positions (spread out)
+                positions[i * 3] = (Math.random() - 0.5) * 30;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 30;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 30;
+
+                colors[i * 3] = initialColor.r;
+                colors[i * 3 + 1] = initialColor.g;
+                colors[i * 3 + 2] = initialColor.b;
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: parseFloat(particleSizeSlider.value),
+                vertexColors: true,
+                sizeAttenuation: true,
+                transparent: true,
+                opacity: 0.85
+            });
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+            
+            // Set initial shape to random cloud (which is what the initial positions are)
+            targetShapePositions = generateRandomCloudPositions(NUM_PARTICLES, 15); // Match initial spread somewhat
+            isMorphing = true; // Start morphing to this initial cloud configuration
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 5;
+            controls.maxDistance = 100;
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            setupEventListeners();
+
+            // Start animation
+            animate();
+        }
+
+        // Setup event listeners for UI controls
+        function setupEventListeners() {
+            particleSizeSlider.addEventListener('input', (event) => {
+                if (particleSystem) {
+                    particleSystem.material.size = parseFloat(event.target.value);
+                }
+            });
+
+            setBaseColorButton.addEventListener('click', () => {
+                applyBaseColor(particleColorPicker.value);
+            });
+
+            rainbowColorsButton.addEventListener('click', applyRainbowColors);
+            
+            sphereShapeButton.addEventListener('click', () => morphToShape(generateSpherePositions(NUM_PARTICLES, 12)));
+            cubeShapeButton.addEventListener('click', () => morphToShape(generateCubePositions(NUM_PARTICLES, 20)));
+            torusKnotShapeButton.addEventListener('click', () => morphToShape(generateTorusKnotPositions(NUM_PARTICLES, 8, 2.5, 2, 3)));
+            randomCloudShapeButton.addEventListener('click', () => morphToShape(generateRandomCloudPositions(NUM_PARTICLES, 18)));
+        }
+
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isMorphing && targetShapePositions) {
+                const positionsAttribute = particleSystem.geometry.attributes.position;
+                const currentPos = new THREE.Vector3();
+                const targetPosVec = new THREE.Vector3();
+                let allMorphed = true;
+
+                for (let i = 0; i < NUM_PARTICLES; i++) {
+                    currentPos.fromBufferAttribute(positionsAttribute, i);
+                    targetPosVec.copy(targetShapePositions[i]);
+
+                    if (currentPos.distanceToSquared(targetPosVec) > 0.001) {
+                        allMorphed = false;
+                        currentPos.lerp(targetPosVec, LERP_FACTOR);
+                        positionsAttribute.setXYZ(i, currentPos.x, currentPos.y, currentPos.z);
+                    } else {
+                        // Snap to target if very close
+                        positionsAttribute.setXYZ(i, targetPosVec.x, targetPosVec.y, targetPosVec.z);
+                    }
+                }
+                positionsAttribute.needsUpdate = true;
+                if (allMorphed) {
+                    isMorphing = false;
+                    // console.log("Morphing complete.");
+                }
+            }
+            
+            // Optional: Add subtle animation to particles when not morphing
+            // else if (particleSystem) {
+            //     const time = Date.now() * 0.0005;
+            //     const positions = particleSystem.geometry.attributes.position;
+            //     for (let i = 0; i < NUM_PARTICLES; i++) {
+            //         const x = positions.getX(i);
+            //         const y = positions.getY(i);
+            //         // positions.setY(i, y + Math.sin(time + x * 0.5) * 0.01); // Example subtle movement
+            //     }
+            //     positions.needsUpdate = true;
+            // }
+
+
+            controls.update(); // For OrbitControls damping
+            renderer.render(scene, camera);
+        }
+
+        // --- Shape Generation Functions ---
+        function morphToShape(newTargetPositions) {
+            targetShapePositions = newTargetPositions;
+            isMorphing = true;
+        }
+
+        function generateSpherePositions(count, radius) {
+            const points = [];
+            for (let i = 0; i < count; i++) {
+                // Fibonacci lattice for more even distribution
+                const goldenRatio = (1 + Math.sqrt(5)) / 2;
+                const theta = 2 * Math.PI * i / goldenRatio;
+                const phi = Math.acos(1 - 2 * (i + 0.5) / count);
+                
+                points.push(new THREE.Vector3(
+                    radius * Math.cos(theta) * Math.sin(phi),
+                    radius * Math.sin(theta) * Math.sin(phi),
+                    radius * Math.cos(phi)
+                ));
+            }
+            return points;
+        }
+
+        function generateCubePositions(count, size) {
+            const points = [];
+            const halfSize = size / 2;
+            for (let i = 0; i < count; i++) {
+                const x = Math.random() * size - halfSize;
+                const y = Math.random() * size - halfSize;
+                const z = Math.random() * size - halfSize;
+                
+                // Project to faces of the cube
+                const randomFace = Math.floor(Math.random() * 6);
+                switch(randomFace) {
+                    case 0: points.push(new THREE.Vector3(halfSize, y, z)); break; // Right
+                    case 1: points.push(new THREE.Vector3(-halfSize, y, z)); break; // Left
+                    case 2: points.push(new THREE.Vector3(x, halfSize, z)); break; // Top
+                    case 3: points.push(new THREE.Vector3(x, -halfSize, z)); break; // Bottom
+                    case 4: points.push(new THREE.Vector3(x, y, halfSize)); break; // Front
+                    case 5: points.push(new THREE.Vector3(x, y, -halfSize)); break; // Back
+                }
+            }
+            return points;
+        }
+        
+        function generateTorusKnotPositions(count, radius, tube, p, q) {
+            const points = [];
+            for (let i = 0; i < count; i++) {
+                const u = (i / count) * p * Math.PI * 2; // Iterate through p loops
+                const x = (radius + tube * Math.cos(q * u / p)) * Math.cos(u);
+                const y = (radius + tube * Math.cos(q * u / p)) * Math.sin(u);
+                const z = tube * Math.sin(q * u / p);
+                points.push(new THREE.Vector3(x, y, z));
+            }
+            return points;
+        }
+
+        function generateRandomCloudPositions(count, spread) {
+            const points = [];
+            for (let i = 0; i < count; i++) {
+                points.push(new THREE.Vector3(
+                    (Math.random() - 0.5) * spread * 2,
+                    (Math.random() - 0.5) * spread * 2,
+                    (Math.random() - 0.5) * spread * 2
+                ));
+            }
+            return points;
+        }
+
+        // --- Color Functions ---
+        function applyBaseColor(hexColor) {
+            if (!particleSystem) return;
+            const colorAttribute = particleSystem.geometry.attributes.color;
+            const color = new THREE.Color(hexColor);
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+                colorAttribute.setXYZ(i, color.r, color.g, color.b);
+            }
+            colorAttribute.needsUpdate = true;
+        }
+
+        function applyRainbowColors() {
+            if (!particleSystem) return;
+            const colorAttribute = particleSystem.geometry.attributes.color;
+            const color = new THREE.Color();
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+                // Use a combination of position and index for varied rainbow
+                const p = particleSystem.geometry.attributes.position;
+                const xNorm = (p.getX(i) / 15 + 1) / 2; // Normalize roughly based on expected spread
+                const yNorm = (p.getY(i) / 15 + 1) / 2;
+                const hue = (xNorm + yNorm + (i / NUM_PARTICLES) * 0.5) % 1.0;
+                color.setHSL(hue, 0.8, 0.6);
+                colorAttribute.setXYZ(i, color.r, color.g, color.b);
+            }
+            colorAttribute.needsUpdate = true;
+        }
+
+        // Start everything
+        init();
+    </script>
+</body>
+</html>
